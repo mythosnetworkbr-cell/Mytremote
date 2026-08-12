@@ -45,16 +45,17 @@ class RemoteApi(private val context: Context) {
 
     fun registerDevice(): String {
         val token = accessToken ?: error("Faça login primeiro")
+        val user = request("/auth/v1/user", "GET", null, token)
+        val userId = user.getString("id")
         val code = deviceCode ?: "MYT-${UUID.randomUUID().toString().replace("-", "").take(8).uppercase()}"
         val body = JSONObject().apply {
-            put("user_id", JSONObject.NULL)
+            put("user_id", userId)
             put("device_code", code)
             put("device_name", "Mythøs Remote")
             put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
             put("online", true)
         }
-        val payload = body.toString().replace("\"user_id\":null,", "")
-        val result = request("/rest/v1/remote_devices?on_conflict=device_code", "POST", JSONArray("[$payload]"), token, "resolution=merge-duplicates,return=representation")
+        val result = requestArray("/rest/v1/remote_devices?on_conflict=device_code", "POST", JSONArray("[${body}]"), token, "resolution=merge-duplicates&return=representation")
         val obj = result.optJSONObject(0) ?: error("Não foi possível registrar o dispositivo")
         deviceId = obj.getString("id")
         deviceCode = obj.getString("device_code")
@@ -70,7 +71,7 @@ class RemoteApi(private val context: Context) {
     fun createSession(targetDeviceId: String): String {
         val token = accessToken ?: error("Faça login primeiro")
         val local = deviceId ?: registerDevice()
-        val arr = request("/rest/v1/remote_sessions", "POST", JSONArray("[{\"requester_device_id\":\"$local\",\"target_device_id\":\"$targetDeviceId\",\"status\":\"pending\"}]"), token, "return=representation")
+        val arr = requestArray("/rest/v1/remote_sessions", "POST", JSONArray("[{\"requester_device_id\":\"$local\",\"target_device_id\":\"$targetDeviceId\",\"status\":\"pending\"}]"), token, "return=representation")
         return arr.getJSONObject(0).getString("id")
     }
 
@@ -85,22 +86,17 @@ class RemoteApi(private val context: Context) {
         request("/rest/v1/remote_sessions?id=eq.$sessionId", "PATCH", JSONObject().put("status", status), token)
     }
 
-    private fun request(path: String, method: String, body: Any, token: String? = accessToken, query: String? = null): JSONArray {
-        val result = requestRaw(path, method, body.toString(), token, query)
-        return JSONArray(result)
-    }
+    private fun request(path: String, method: String, body: JSONObject): JSONObject = request(path, method, body, accessToken)
 
-    private fun requestArray(path: String, method: String, body: Any?, token: String): JSONArray =
-        JSONArray(requestRaw(path, method, body?.toString(), token, null))
+    private fun request(path: String, method: String, body: JSONObject?, token: String?): JSONObject =
+        JSONObject(requestRaw(path, method, body?.toString(), token, null))
 
-    private fun request(path: String, method: String, body: JSONObject): JSONObject =
-        JSONObject(requestRaw(path, method, body.toString(), null, null))
-
-    private fun request(path: String, method: String, body: JSONObject, token: String, query: String? = null): JSONObject =
-        JSONObject(requestRaw(path, method, body.toString(), token, query))
+    private fun requestArray(path: String, method: String, body: Any?, token: String?, query: String? = null): JSONArray =
+        JSONArray(requestRaw(path, method, body?.toString(), token, query))
 
     private fun requestRaw(path: String, method: String, body: String?, token: String?, query: String?): String {
-        val url = URL(SUPABASE_URL + path + (if (query != null) "&$query" else ""))
+        val separator = if (path.contains("?")) "&" else "?"
+        val url = URL(SUPABASE_URL + path + (query?.let { separator + it } ?: ""))
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15000
