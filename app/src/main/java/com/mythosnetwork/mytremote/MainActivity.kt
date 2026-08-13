@@ -37,7 +37,7 @@ class MainActivity : ComponentActivity() {
         api.registerDevice()
         viewerServer = ScreenViewerServer { bitmap -> runOnUiThread { remoteFrame.value = bitmap } }
         viewerServer.start()
-        local = LocalRemoteManager { name, socket ->
+        local = LocalRemoteManager(this) { name, socket ->
             pendingSocket = socket
             pendingViewerIp = socket.inetAddress.hostAddress
             requester.value = name
@@ -135,12 +135,12 @@ private fun RemoteHome(api: RemoteApi, local: LocalRemoteManager, frame: Bitmap?
         Button(onClick = {
             if (remoteAddress.isBlank()) message = "Digite o ID MYT do aparelho remoto."
             else {
-                message = "Localizando o aparelho ${remoteAddress.trim()}..."
+                message = "Localizando o aparelho ${remoteAddress.trim().uppercase()}..."
                 local.request(remoteAddress, myCode) { response ->
                     message = when (response) {
                         "ACCEPT" -> "Conexão autorizada. Controle liberado."
                         "REJECT" -> "O aparelho remoto recusou a conexão."
-                        "ERROR:DEVICE_NOT_FOUND" -> "ID não encontrado. Os dois aparelhos precisam estar na mesma rede Wi‑Fi."
+                        "ERROR:DEVICE_NOT_FOUND" -> "ID não encontrado. Os dois aparelhos precisam estar na mesma rede Wi‑Fi e sem isolamento de clientes."
                         else -> if (response.startsWith("ERROR:")) "Não foi possível conectar. Confira o Wi‑Fi e o ID." else response
                     }
                 }
