@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
             requester.value = name
             showRequest.value = true
         }
+        local.setDeviceCode(api.deviceCode.orEmpty())
         local.start()
         setContent {
             MaterialTheme {
@@ -57,7 +58,7 @@ class MainActivity : ComponentActivity() {
                             pendingViewerIp = null
                             showRequest.value = false
                         },
-                        title = { Text("Solicitação de acesso") },
+                        title = { Text("Solicitação de suporte") },
                         text = { Text("O aparelho ${requester.value} quer acessar seu dispositivo pela rede Wi‑Fi.\n\nAceite somente se reconhecer este aparelho.") },
                         confirmButton = {
                             Button(onClick = {
@@ -110,7 +111,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun RemoteHome(api: RemoteApi, local: LocalRemoteManager, frame: Bitmap?, onStartCapture: () -> Unit, onAccessibilitySettings: () -> Unit) {
     var remoteAddress by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf("Servidor Wi‑Fi ativo na porta ${LocalRemoteManager.PORT}") }
+    var message by remember { mutableStateOf("Pronto. Use o ID MYT do outro aparelho na mesma rede Wi‑Fi.") }
     val myCode = api.deviceCode.orEmpty()
 
     Column(
@@ -118,7 +119,7 @@ private fun RemoteHome(api: RemoteApi, local: LocalRemoteManager, frame: Bitmap?
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("MYTHØS REMOTE", style = MaterialTheme.typography.headlineMedium)
+        Text("SUPORTE MYTHØS", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(6.dp))
         Text("Suporte remoto autorizado")
         Spacer(Modifier.height(10.dp))
@@ -129,17 +130,18 @@ private fun RemoteHome(api: RemoteApi, local: LocalRemoteManager, frame: Bitmap?
         Text("SEU ID", style = MaterialTheme.typography.labelLarge)
         Text(myCode, style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(10.dp))
-        OutlinedTextField(value = remoteAddress, onValueChange = { remoteAddress = it }, label = { Text("IP do outro aparelho") }, placeholder = { Text("Ex.: 192.168.1.20") }, singleLine = true)
+        OutlinedTextField(value = remoteAddress, onValueChange = { remoteAddress = it }, label = { Text("ID do outro aparelho") }, placeholder = { Text("Ex.: MYT-70172A43") }, singleLine = true)
         Spacer(Modifier.height(8.dp))
         Button(onClick = {
-            if (remoteAddress.isBlank()) message = "Digite o IP do aparelho remoto."
+            if (remoteAddress.isBlank()) message = "Digite o ID MYT do aparelho remoto."
             else {
-                message = "Solicitação enviada. Aguardando ACEITAR..."
+                message = "Localizando o aparelho ${remoteAddress.trim()}..."
                 local.request(remoteAddress, myCode) { response ->
                     message = when (response) {
                         "ACCEPT" -> "Conexão autorizada. Controle liberado."
                         "REJECT" -> "O aparelho remoto recusou a conexão."
-                        else -> if (response.startsWith("ERROR:")) "Não foi possível conectar. Verifique Wi‑Fi e IP." else response
+                        "ERROR:DEVICE_NOT_FOUND" -> "ID não encontrado. Os dois aparelhos precisam estar na mesma rede Wi‑Fi."
+                        else -> if (response.startsWith("ERROR:")) "Não foi possível conectar. Confira o Wi‑Fi e o ID." else response
                     }
                 }
             }
