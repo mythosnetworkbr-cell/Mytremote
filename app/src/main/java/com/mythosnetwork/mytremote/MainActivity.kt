@@ -6,17 +6,12 @@ import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.lifecycle.lifecycleScope
 import com.mythosnetwork.mytremote.remote.RemoteApi
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
@@ -26,7 +21,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         api = RemoteApi(this)
-        setContent { MaterialTheme { RemoteHome(api, ::startCapture, lifecycleScope) } }
+        api.registerDevice()
+        setContent { MaterialTheme { RemoteHome(api, ::startCapture) } }
     }
 
     private fun startCapture() {
@@ -45,63 +41,55 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun RemoteHome(api: RemoteApi, onStartCapture: () -> Unit, scope: kotlinx.coroutines.CoroutineScope) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+private fun RemoteHome(api: RemoteApi, onStartCapture: () -> Unit) {
     var remoteCode by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
-    var loggedIn by remember { mutableStateOf(api.isLoggedIn()) }
-    var myCode by remember { mutableStateOf(api.deviceCode ?: "") }
-    var connecting by remember { mutableStateOf(false) }
+    val myCode = api.deviceCode.orEmpty()
 
-    Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Text("MYTHØS REMOTE", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
         Text("Acesso remoto autorizado entre Androids")
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(28.dp))
 
-        if (!loggedIn) {
-            OutlinedTextField(email, { email = it }, label = { Text("E-mail") }, singleLine = true)
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(password, { password = it }, label = { Text("Senha") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    scope.launch {
-                        try { withContext(Dispatchers.IO) { api.login(email.trim(), password) }; loggedIn = true; myCode = api.deviceCode.orEmpty(); message = "Dispositivo registrado" }
-                        catch (e: Exception) { message = e.message ?: "Falha no login" }
-                    }
-                }) { Text("Entrar") }
-                OutlinedButton(onClick = {
-                    scope.launch {
-                        try { withContext(Dispatchers.IO) { api.signup(email.trim(), password) }; loggedIn = api.isLoggedIn(); myCode = api.deviceCode.orEmpty(); message = if (loggedIn) "Conta criada" else "Confirme o e-mail e entre" }
-                        catch (e: Exception) { message = e.message ?: "Falha no cadastro" }
-                    }
-                }) { Text("Criar conta") }
-            }
-        } else {
-            Text("Seu ID", style = MaterialTheme.typography.labelLarge)
-            Text(myCode.ifBlank { "registrando..." }, style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(18.dp))
-            OutlinedTextField(remoteCode, { remoteCode = it }, label = { Text("ID do outro aparelho") }, singleLine = true)
-            Spacer(Modifier.height(10.dp))
-            Button(enabled = !connecting, onClick = {
-                scope.launch {
-                    connecting = true
-                    try {
-                        val device = withContext(Dispatchers.IO) { api.findDevice(remoteCode) }
-                        if (device == null) message = "Dispositivo não encontrado"
-                        else { withContext(Dispatchers.IO) { api.createSession(device.getString("id")) }; message = "Solicitação enviada. Aguarde a autorização." }
-                    } catch (e: Exception) { message = e.message ?: "Falha na conexão" }
-                    connecting = false
-                }
-            }) { Text(if (connecting) "Conectando..." else "Solicitar conexão") }
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onStartCapture) { Text("Autorizar compartilhamento da tela") }
-        }
-        Spacer(Modifier.height(18.dp))
-        if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
+        Text("SEU ID", style = MaterialTheme.typography.labelLarge)
+        Text(myCode, style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(20.dp))
+
+        OutlinedTextField(
+            value = remoteCode,
+            onValueChange = { remoteCode = it },
+            label = { Text("ID do outro aparelho") },
+            singleLine = true
+        )
         Spacer(Modifier.height(12.dp))
-        Text("O controle remoto exige autorização explícita do aparelho remoto.", style = MaterialTheme.typography.bodySmall)
+
+        Button(onClick = {
+            val target = api.findDevice(remoteCode)
+            message = if (target == null) {
+                "ID não encontrado. A sinalização pela internet será adicionada ao próximo backend."
+            } else {
+                "ID localizado. Autorize o compartilhamento da tela no aparelho remoto."
+            }
+        }) { Text("Solicitar conexão") }
+
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onStartCapture) {
+            Text("Autorizar compartilhamento da tela")
+        }
+
+        Spacer(Modifier.height(18.dp))
+        if (message.isNotBlank()) {
+            Text(message, style = MaterialTheme.typography.bodySmall)
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "O controle remoto exige autorização explícita do aparelho remoto.",
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
