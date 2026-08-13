@@ -20,35 +20,50 @@ class MainActivity : ComponentActivity() {
     private lateinit var api: RemoteApi
     private lateinit var local: LocalRemoteManager
     private var pendingSocket: Socket? = null
+    private var showRequest = mutableStateOf(false)
+    private var requester = mutableStateOf("")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         api = RemoteApi(this)
         api.registerDevice()
-        local = LocalRemoteManager(this) { requester, socket ->
+        local = LocalRemoteManager(this) { name, socket ->
             pendingSocket = socket
-            runOnUiThread {
-                androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("Solicitação de acesso")
-                    .setMessage("O aparelho $requester quer acessar seu dispositivo pela rede Wi‑Fi.\n\nVocê deve aceitar somente se reconhecer este aparelho.")
-                    .setNegativeButton("Recusar") { _, _ ->
-                        pendingSocket?.let { local.reject(it) }
-                        pendingSocket = null
-                    }
-                    .setPositiveButton("Aceitar") { _, _ ->
-                        pendingSocket?.let { local.accept(it) }
-                        pendingSocket = null
-                        startCapture()
-                    }
-                    .setOnCancelListener {
-                        pendingSocket?.let { local.reject(it) }
-                        pendingSocket = null
-                    }
-                    .show()
-            }
+            requester.value = name
+            showRequest.value = true
         }
         local.start()
-        setContent { MaterialTheme { RemoteHome(api, local, ::startCapture) } }
+        setContent {
+            MaterialTheme {
+                RemoteHome(api, local, ::startCapture)
+                if (showRequest.value) {
+                    AlertDialog(
+                        onDismissRequest = {
+                            pendingSocket?.let { local.reject(it) }
+                            pendingSocket = null
+                            showRequest.value = false
+                        },
+                        title = { Text("Solicitação de acesso") },
+                        text = { Text("O aparelho ${requester.value} quer acessar seu dispositivo pela rede Wi‑Fi.\n\nAceite somente se reconhecer este aparelho.") },
+                        confirmButton = {
+                            Button(onClick = {
+                                pendingSocket?.let { local.accept(it) }
+                                pendingSocket = null
+                                showRequest.value = false
+                                startCapture()
+                            }) { Text("ACEITAR") }
+                        },
+                        dismissButton = {
+                            OutlinedButton(onClick = {
+                                pendingSocket?.let { local.reject(it) }
+                                pendingSocket = null
+                                showRequest.value = false
+                            }) { Text("RECUSAR") }
+                        }
+                    )
+                }
+            }
+        }
     }
 
     private fun startCapture() {
@@ -100,7 +115,7 @@ private fun RemoteHome(api: RemoteApi, local: LocalRemoteManager, onStartCapture
         Button(onClick = {
             if (remoteAddress.isBlank()) message = "Digite o IP do aparelho remoto."
             else {
-                message = "Solicitação enviada. Aguardando Aceitar..."
+                message = "Solicitação enviada. Aguardando ACEITAR..."
                 local.request(remoteAddress, myCode) { response ->
                     message = when {
                         response == "ACCEPT" -> "Conexão autorizada pelo aparelho remoto."
