@@ -3,7 +3,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
-    <application android:theme="@style/Theme.Mytremote" android:label="Mythøs Remote" android:allowBackup="false" android:supportsRtl="true">
+    <application android:theme="@style/Theme.Mytremote" android:label="Suporte Mythøs" android:icon="@drawable/mythos_support_icon" android:roundIcon="@drawable/mythos_support_icon" android:allowBackup="false" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
