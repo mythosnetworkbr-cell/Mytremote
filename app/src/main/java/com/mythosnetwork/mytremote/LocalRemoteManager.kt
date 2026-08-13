@@ -1,5 +1,7 @@
 package com.mythosnetwork.mytremote
 
+import android.content.Context
+import android.net.wifi.WifiManager
 import android.os.Handler
 import android.os.Looper
 import java.io.BufferedReader
@@ -13,15 +15,16 @@ import java.net.Socket
 import java.util.concurrent.Executors
 
 /** Authorized local-LAN control channel. The device owner must accept each session. */
-class LocalRemoteManager(private val onRequest: (String, Socket) -> Unit) {
+class LocalRemoteManager(private val context: Context, private val onRequest: (String, Socket) -> Unit) {
     companion object {
         const val PORT = 45454
         private const val DISCOVERY_PORT = 45456
-        private const val DISCOVERY_INTERVAL_MS = 3000L
     }
 
     private val executor = Executors.newCachedThreadPool()
     private val main = Handler(Looper.getMainLooper())
+    private val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+    private var multicastLock: WifiManager.MulticastLock? = null
     @Volatile private var running = false
     private var server: ServerSocket? = null
     @Volatile private var clientSocket: Socket? = null
@@ -32,6 +35,13 @@ class LocalRemoteManager(private val onRequest: (String, Socket) -> Unit) {
     fun start() {
         if (running) return
         running = true
+        try {
+            multicastLock = wifiManager.createMulticastLock("mythos_remote_discovery").apply {
+                setReferenceCounted(true)
+                acquire()
+            }
+        } catch (_: Exception) { }
+
         executor.execute {
             try {
                 server = ServerSocket(PORT)
@@ -44,29 +54,25 @@ class LocalRemoteManager(private val onRequest: (String, Socket) -> Unit) {
         executor.execute { discoveryLoop() }
     }
 
-    fun setDeviceCode(code: String) { deviceCode = code }
+    fun setDeviceCode(code: String) { deviceCode = code.trim().uppercase() }
 
     private fun discoveryLoop() {
         try {
-            discoverySocket = DatagramSocket(DISCOVERY_PORT).apply { broadcast = true; reuseAddress = true }
+            discoverySocket = DatagramSocket(null).apply {
+                reuseAddress = true
+                broadcast = true
+                bind(java.net.InetSocketAddress(DISCOVERY_PORT))
+                soTimeout = 700
+            }
             val socket = discoverySocket!!
-            socket.soTimeout = 1000
-            var lastBroadcast = 0L
             val buffer = ByteArray(512)
             while (running) {
-                val now = System.currentTimeMillis()
-                if (deviceCode.isNotBlank() && now - lastBroadcast >= DISCOVERY_INTERVAL_MS) {
-                    val data = "HELLO|$deviceCode".toByteArray(Charsets.UTF_8)
-                    val packet = DatagramPacket(data, data.size, InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT)
-                    socket.send(packet)
-                    lastBroadcast = now
-                }
                 try {
                     val packet = DatagramPacket(buffer, buffer.size)
                     socket.receive(packet)
-                    val message = String(packet.data, 0, packet.length, Charsets.UTF_8)
-                    if (message.startsWith("FIND|")) {
-                        val wanted = message.removePrefix("FIND|").trim()
+                    val message = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
+                    if (message.startsWith("FIND|", ignoreCase = true)) {
+                        val wanted = message.substringAfter('|').trim().uppercase()
                         if (wanted == deviceCode && deviceCode.isNotBlank()) {
                             val reply = "HERE|$deviceCode".toByteArray(Charsets.UTF_8)
                             socket.send(DatagramPacket(reply, reply.size, packet.address, packet.port))
@@ -124,8 +130,8 @@ class LocalRemoteManager(private val onRequest: (String, Socket) -> Unit) {
     fun request(addressOrId: String, myCode: String, callback: (String) -> Unit) {
         executor.execute {
             try {
-                val target = addressOrId.trim()
-                val ip = if (target.startsWith("MYT-", ignoreCase = true)) discoverIp(target) else target
+                val target = addressOrId.trim().uppercase()
+                val ip = if (target.startsWith("MYT-")) discoverIp(target) else target
                 if (ip.isNullOrBlank()) {
                     main.post { callback("ERROR:DEVICE_NOT_FOUND") }
                     return@execute
@@ -150,22 +156,25 @@ class LocalRemoteManager(private val onRequest: (String, Socket) -> Unit) {
     }
 
     private fun discoverIp(targetId: String): String? {
-        val socket = DatagramSocket().apply { broadcast = true; soTimeout = 2500; reuseAddress = true }
-        return try {
-            val data = "FIND|${targetId.uppercase()}".toByteArray(Charsets.UTF_8)
-            socket.send(DatagramPacket(data, data.size, InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT))
-            val buffer = ByteArray(512)
-            val deadline = System.currentTimeMillis() + 2500
-            while (System.currentTimeMillis() < deadline) {
-                try {
-                    val packet = DatagramPacket(buffer, buffer.size)
-                    socket.receive(packet)
-                    val message = String(packet.data, 0, packet.length, Charsets.UTF_8)
-                    if (message.equals("HERE|${targetId.uppercase()}", ignoreCase = true)) return packet.address.hostAddress
-                } catch (_: java.net.SocketTimeoutException) { break }
-            }
-            null
-        } finally { socket.close() }
+        val wanted = targetId.trim().uppercase()
+        repeat(2) {
+            val socket = DatagramSocket().apply { broadcast = true; reuseAddress = true; soTimeout = 1800 }
+            try {
+                val data = "FIND|$wanted".toByteArray(Charsets.UTF_8)
+                socket.send(DatagramPacket(data, data.size, InetAddress.getByName("255.255.255.255"), DISCOVERY_PORT))
+                val buffer = ByteArray(512)
+                val deadline = System.currentTimeMillis() + 1800
+                while (System.currentTimeMillis() < deadline) {
+                    try {
+                        val packet = DatagramPacket(buffer, buffer.size)
+                        socket.receive(packet)
+                        val message = String(packet.data, 0, packet.length, Charsets.UTF_8).trim()
+                        if (message.equals("HERE|$wanted", ignoreCase = true)) return packet.address.hostAddress
+                    } catch (_: java.net.SocketTimeoutException) { }
+                }
+            } finally { socket.close() }
+        }
+        return null
     }
 
     fun sendCommand(command: String): Boolean {
@@ -186,5 +195,7 @@ class LocalRemoteManager(private val onRequest: (String, Socket) -> Unit) {
         server = null
         try { discoverySocket?.close() } catch (_: Exception) { }
         discoverySocket = null
+        try { multicastLock?.release() } catch (_: Exception) { }
+        multicastLock = null
     }
 }
