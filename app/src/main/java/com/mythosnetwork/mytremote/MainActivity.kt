@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -13,8 +14,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import com.mythosnetwork.mytremote.remote.RemoteApi
 import java.net.Socket
@@ -36,7 +37,7 @@ class MainActivity : ComponentActivity() {
         api.registerDevice()
         viewerServer = ScreenViewerServer { bitmap -> runOnUiThread { remoteFrame.value = bitmap } }
         viewerServer.start()
-        local = LocalRemoteManager(this) { name, socket ->
+        local = LocalRemoteManager { name, socket ->
             pendingSocket = socket
             pendingViewerIp = socket.inetAddress.hostAddress
             requester.value = name
@@ -45,7 +46,9 @@ class MainActivity : ComponentActivity() {
         local.start()
         setContent {
             MaterialTheme {
-                RemoteHome(api, local, remoteFrame.value, ::startCapture)
+                RemoteHome(api, local, remoteFrame.value, ::startCapture) {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
                 if (showRequest.value) {
                     AlertDialog(
                         onDismissRequest = {
@@ -105,47 +108,61 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun RemoteHome(api: RemoteApi, local: LocalRemoteManager, frame: Bitmap?, onStartCapture: () -> Unit) {
+private fun RemoteHome(api: RemoteApi, local: LocalRemoteManager, frame: Bitmap?, onStartCapture: () -> Unit, onAccessibilitySettings: () -> Unit) {
     var remoteAddress by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("Servidor Wi‑Fi ativo na porta ${LocalRemoteManager.PORT}") }
     val myCode = api.deviceCode.orEmpty()
 
     Column(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier.fillMaxSize().padding(18.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("MYTHØS REMOTE", style = MaterialTheme.typography.headlineMedium)
-        Spacer(Modifier.height(8.dp))
-        Text("Controle remoto autorizado pela rede Wi‑Fi")
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(6.dp))
+        Text("Suporte remoto autorizado")
+        Spacer(Modifier.height(10.dp))
         if (frame != null) {
-            Image(frame.asImageBitmap(), contentDescription = "Tela remota", modifier = Modifier.fillMaxWidth().height(360.dp), contentScale = ContentScale.Fit)
-            Spacer(Modifier.height(12.dp))
+            Image(frame.asImageBitmap(), contentDescription = "Tela remota", modifier = Modifier.fillMaxWidth().height(300.dp), contentScale = ContentScale.Fit)
+            Spacer(Modifier.height(8.dp))
         }
         Text("SEU ID", style = MaterialTheme.typography.labelLarge)
         Text(myCode, style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
         OutlinedTextField(value = remoteAddress, onValueChange = { remoteAddress = it }, label = { Text("IP do outro aparelho") }, placeholder = { Text("Ex.: 192.168.1.20") }, singleLine = true)
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
         Button(onClick = {
             if (remoteAddress.isBlank()) message = "Digite o IP do aparelho remoto."
             else {
                 message = "Solicitação enviada. Aguardando ACEITAR..."
                 local.request(remoteAddress, myCode) { response ->
                     message = when (response) {
-                        "ACCEPT" -> "Conexão autorizada. Recebendo tela..."
+                        "ACCEPT" -> "Conexão autorizada. Controle liberado."
                         "REJECT" -> "O aparelho remoto recusou a conexão."
                         else -> if (response.startsWith("ERROR:")) "Não foi possível conectar. Verifique Wi‑Fi e IP." else response
                     }
                 }
             }
         }) { Text("Solicitar conexão") }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { local.sendCommand("BACK") }) { Text("Voltar") }
+            OutlinedButton(onClick = { local.sendCommand("HOME") }) { Text("Início") }
+            OutlinedButton(onClick = { local.sendCommand("RECENTS") }) { Text("Recentes") }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { local.sendCommand("SWIPE|360|1100|360|300") }) { Text("↑") }
+            OutlinedButton(onClick = { local.sendCommand("SWIPE|360|300|360|1100") }) { Text("↓") }
+            OutlinedButton(onClick = { local.sendCommand("SWIPE|100|700|620|700") }) { Text("→") }
+        }
+        Spacer(Modifier.height(6.dp))
+        OutlinedButton(onClick = onAccessibilitySettings) { Text("Ativar controle de acessibilidade") }
+        Spacer(Modifier.height(4.dp))
         OutlinedButton(onClick = onStartCapture) { Text("Autorizar minha tela") }
-        Spacer(Modifier.height(14.dp))
-        Text(message, style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
-        Text("Os dois aparelhos precisam estar na mesma rede Wi‑Fi.", style = MaterialTheme.typography.bodySmall)
+        Text(message, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(4.dp))
+        Text("A captura e o controle só funcionam após autorização explícita no aparelho remoto.", style = MaterialTheme.typography.bodySmall)
     }
 }
