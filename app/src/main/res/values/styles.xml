@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Mythøs Remote</string>
+    <string name="accessibility_service_description">Permite executar gestos autorizados durante uma sessão Mythøs Remote.</string>
+    <style name="Theme.Mytremote" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">#090A0F</item>
+        <item name="android:navigationBarColor">#090A0F</item>
+    </style>
+</resources>
