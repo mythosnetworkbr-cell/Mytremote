@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -15,6 +16,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.util.DisplayMetrics
+import android.view.WindowManager
 import java.io.DataOutputStream
 import java.net.Socket
 import java.util.concurrent.Executors
@@ -32,32 +34,48 @@ class ScreenCaptureService : Service() {
         val channelId = "mythos_remote_capture"
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(channelId, "Mythøs Remote", NotificationManager.IMPORTANCE_LOW))
-        startForeground(1001, Notification.Builder(this, channelId)
+        val notification = Notification.Builder(this, channelId)
             .setContentTitle("Mythøs Remote ativo")
             .setContentText("A tela está sendo compartilhada com autorização.")
-            .setSmallIcon(android.R.drawable.ic_menu_view).build())
+            .setSmallIcon(android.R.drawable.ic_menu_view)
+            .build()
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            @Suppress("DEPRECATION") startForeground(1001, notification)
+        }
 
         val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
-        val data = if (Build.VERSION.SDK_INT >= 33) intent?.getParcelableExtra("data", Intent::class.java) else @Suppress("DEPRECATION") intent?.getParcelableExtra("data")
+        val data = if (Build.VERSION.SDK_INT >= 33) {
+            intent?.getParcelableExtra("data", Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION") intent?.getParcelableExtra("data")
+        }
         val viewerIp = intent?.getStringExtra("viewerIp").orEmpty()
         if (data != null) {
-            val managerProjection = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            projection = managerProjection.getMediaProjection(resultCode, data)
+            val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            projection = projectionManager.getMediaProjection(resultCode, data)
             startCapture(viewerIp)
         }
         return START_NOT_STICKY
     }
 
     private fun startCapture(viewerIp: String) {
+        val windowManager = getSystemService(WindowManager::class.java)
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION") windowManager.defaultDisplay.getRealMetrics(metrics)
         val width = minOf(metrics.widthPixels, 720)
         val height = (metrics.heightPixels.toFloat() * width / metrics.widthPixels).toInt().coerceAtLeast(1)
         val density = metrics.densityDpi
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        projection?.registerCallback(object : MediaProjection.Callback() { override fun onStop() { stopCapture() } }, null)
-        virtualDisplay = projection?.createVirtualDisplay("MythosRemote", width, height, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, imageReader!!.surface, null, null)
+        projection?.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() { stopCapture() }
+        }, null)
+        virtualDisplay = projection?.createVirtualDisplay(
+            "MythosRemote", width, height, density,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader!!.surface, null, null
+        )
         if (viewerIp.isBlank()) return
         executor.execute {
             try {
