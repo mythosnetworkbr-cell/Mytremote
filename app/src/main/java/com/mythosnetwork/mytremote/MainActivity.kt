@@ -6,28 +6,59 @@ import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import com.mythosnetwork.mytremote.remote.RemoteApi
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.mythosnetwork.mytremote.remote.RemoteApi
+import java.net.Socket
 
 class MainActivity : ComponentActivity() {
     private val projectionRequest = 9001
     private lateinit var api: RemoteApi
+    private lateinit var local: LocalRemoteManager
+    private var pendingSocket: Socket? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         api = RemoteApi(this)
         api.registerDevice()
-        setContent { MaterialTheme { RemoteHome(api, ::startCapture) } }
+        local = LocalRemoteManager(this) { requester, socket ->
+            pendingSocket = socket
+            runOnUiThread {
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Solicitação de acesso")
+                    .setMessage("O aparelho $requester quer acessar seu dispositivo pela rede Wi‑Fi.\n\nVocê deve aceitar somente se reconhecer este aparelho.")
+                    .setNegativeButton("Recusar") { _, _ ->
+                        pendingSocket?.let { local.reject(it) }
+                        pendingSocket = null
+                    }
+                    .setPositiveButton("Aceitar") { _, _ ->
+                        pendingSocket?.let { local.accept(it) }
+                        pendingSocket = null
+                        startCapture()
+                    }
+                    .setOnCancelListener {
+                        pendingSocket?.let { local.reject(it) }
+                        pendingSocket = null
+                    }
+                    .show()
+            }
+        }
+        local.start()
+        setContent { MaterialTheme { RemoteHome(api, local, ::startCapture) } }
     }
 
     private fun startCapture() {
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(manager.createScreenCaptureIntent(), projectionRequest)
+    }
+
+    override fun onDestroy() {
+        if (::local.isInitialized) local.stop()
+        super.onDestroy()
     }
 
     @Deprecated("Activity result API")
@@ -41,9 +72,9 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun RemoteHome(api: RemoteApi, onStartCapture: () -> Unit) {
-    var remoteCode by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf("") }
+private fun RemoteHome(api: RemoteApi, local: LocalRemoteManager, onStartCapture: () -> Unit) {
+    var remoteAddress by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("Servidor Wi‑Fi ativo na porta ${LocalRemoteManager.PORT}") }
     val myCode = api.deviceCode.orEmpty()
 
     Column(
@@ -53,43 +84,38 @@ private fun RemoteHome(api: RemoteApi, onStartCapture: () -> Unit) {
     ) {
         Text("MYTHØS REMOTE", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
-        Text("Acesso remoto autorizado entre Androids")
-        Spacer(Modifier.height(28.dp))
-
+        Text("Controle remoto autorizado pela rede Wi‑Fi")
+        Spacer(Modifier.height(24.dp))
         Text("SEU ID", style = MaterialTheme.typography.labelLarge)
         Text(myCode, style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(20.dp))
-
         OutlinedTextField(
-            value = remoteCode,
-            onValueChange = { remoteCode = it },
-            label = { Text("ID do outro aparelho") },
+            value = remoteAddress,
+            onValueChange = { remoteAddress = it },
+            label = { Text("IP do outro aparelho") },
+            placeholder = { Text("Ex.: 192.168.1.20") },
             singleLine = true
         )
         Spacer(Modifier.height(12.dp))
-
         Button(onClick = {
-            val target = api.findDevice(remoteCode)
-            message = if (target == null) {
-                "ID não encontrado. A sinalização pela internet será adicionada ao próximo backend."
-            } else {
-                "ID localizado. Autorize o compartilhamento da tela no aparelho remoto."
+            if (remoteAddress.isBlank()) message = "Digite o IP do aparelho remoto."
+            else {
+                message = "Solicitação enviada. Aguardando Aceitar..."
+                local.request(remoteAddress, myCode) { response ->
+                    message = when {
+                        response == "ACCEPT" -> "Conexão autorizada pelo aparelho remoto."
+                        response == "REJECT" -> "O aparelho remoto recusou a conexão."
+                        response.startsWith("ERROR:") -> "Não foi possível conectar. Verifique Wi‑Fi e IP."
+                        else -> "Resposta: $response"
+                    }
+                }
             }
         }) { Text("Solicitar conexão") }
-
         Spacer(Modifier.height(8.dp))
-        OutlinedButton(onClick = onStartCapture) {
-            Text("Autorizar compartilhamento da tela")
-        }
-
+        OutlinedButton(onClick = onStartCapture) { Text("Autorizar minha tela") }
         Spacer(Modifier.height(18.dp))
-        if (message.isNotBlank()) {
-            Text(message, style = MaterialTheme.typography.bodySmall)
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "O controle remoto exige autorização explícita do aparelho remoto.",
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text(message, style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(10.dp))
+        Text("Os dois aparelhos precisam estar na mesma rede Wi‑Fi.", style = MaterialTheme.typography.bodySmall)
     }
 }
